@@ -1,0 +1,27 @@
+version: 2
+jobs:
+  build:
+    working_directory: ~/pthread
+    machine: true
+    steps:
+    - checkout
+    - restore_cache:
+        key: pthread-stack-dependencies-{{ checksum "stack.yaml" }}
+    - run:
+        name: install stack
+        command: curl -sSL https://get.haskellstack.org/ | sh
+    - run:
+        name: build dependencies
+        command: |
+            stack setup
+            stack --no-terminal build --only-dependencies --prefetch --test --bench
+    - save_cache:
+        key: pthread-stack-dependencies-{{ checksum "stack.yaml" }}
+        paths:
+        - ~/.stack
+    - run:
+        name: build project
+        command: stack --no-terminal build --pedantic --test --bench --no-run-tests --no-run-benchmarks
+    - run:
+        name: test
+        command: stack --no-terminal test
