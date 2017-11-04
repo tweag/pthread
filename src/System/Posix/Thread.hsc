@@ -25,7 +25,7 @@ import Foreign.C.Error (Errno(..), errnoToIOError)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr
 import Foreign.Storable
-import GHC.Stack (HasCallStack, callStack, getCallStack)
+import GHC.Stack (HasCallStack, callStack, getCallStack, prettySrcLoc)
 
 -- These two might be used depending on what the Key representation expands to.
 import Data.Int
@@ -96,6 +96,6 @@ checkBoundness = when rtsSupportsBoundThreads $ do
 -- | Yields an error if the passed integer is not zero.
 throwIfNonZero_ :: HasCallStack => IO CInt -> IO ()
 throwIfNonZero_ m = m >>= \rc -> when (rc /= 0) $
-    ioError (errnoToIOError name (Errno rc) Nothing Nothing)
+    ioError (errnoToIOError (prettySrcLoc loc) (Errno rc) Nothing Nothing)
   where
-    (name, _):_ = getCallStack callStack
+    (_, loc):_ = getCallStack callStack
