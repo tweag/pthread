@@ -3,13 +3,25 @@
 {-# LANGUAGE CApiFFI #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- see comment on the imports of Data.Int and Data.Word
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 
 module System.Posix.Thread
-  ( -- * thread local storage
-    Key
+  ( -- * Threads
+    create
+  , create_
+  , exit
+  , exit_
+  , cancel
+  , join
+  , detach
+  , myThreadId
+    -- * Attributes
+  , Attributes(..)
+    -- * Thread local storage
+  , Key
   , createKey
   , createKey_
   , deleteKey
@@ -23,7 +35,7 @@ import Control.Monad ((>=>), unless, when)
 import Foreign.C.Types
 import Foreign.C.Error (Errno(..), errnoToIOError)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Ptr
+import Foreign.Ptr (FunPtr, Ptr, nullFunPtr, nullPtr)
 import Foreign.Storable
 import GHC.Stack (HasCallStack, callStack, getCallStack, prettySrcLoc)
 
@@ -32,6 +44,202 @@ import Data.Int
 import Data.Word
 
 #include <pthread.h>
+
+newtype ThreadId = ThreadId #{type pthread_t}
+  deriving (Eq, Ord, Show, Storable)
+
+foreign import capi unsafe "pthread.h" pthread_create
+  :: Ptr ThreadId -> Ptr Attributes -> FunPtr (Ptr a -> IO b) -> Ptr a -> IO CInt
+
+foreign import ccall "wrapper" wrap :: (Ptr a -> IO (Ptr b)) -> IO (FunPtr (Ptr a -> IO (Ptr b)))
+
+-- | Create a new thread.
+create
+  :: Attributes
+  -> IO (Ptr a) -- ^ Created thread runs this IO computation.
+  -> IO ThreadId
+create attrs action =
+    alloca $ \tidPtr ->
+    alloca $ \attrsPtr -> do
+      poke attrsPtr attrs
+      fptr <- wrap $ \_ -> action
+      throwIfNonZero_ $ pthread_create tidPtr attrsPtr fptr nullPtr
+      peek tidPtr
+
+-- | Like 'create', but with an 'IO' computation that returns nothing.
+create_ :: Attributes -> IO () -> IO ThreadId
+create_ attrs action = create attrs (action >> return nullPtr)
+
+foreign import capi safe "pthread.h" pthread_exit :: Ptr a -> IO ()
+
+-- | Terminate calling thread.
+exit :: Ptr a -> IO ()
+exit = pthread_exit
+
+-- | Like 'exit', but don't return anything.
+exit_ :: IO ()
+exit_ = exit nullPtr
+
+foreign import capi safe "pthread.h" pthread_cancel :: ThreadId -> IO CInt
+
+-- | Send a cancellation request to a thread.
+cancel :: ThreadId -> IO ()
+cancel tid = throwIfNonZero_ $ pthread_cancel tid
+
+foreign import capi safe "pthread.h" pthread_join
+  :: ThreadId -> Ptr (Ptr a) -> IO CInt
+
+-- | Join with a terminated thread.
+join :: ThreadId -> IO (Ptr a)
+join tid = alloca $ \ptr -> do
+    throwIfNonZero_ $ pthread_join tid ptr
+    peek ptr
+
+foreign import capi unsafe "pthread.h" pthread_detach :: ThreadId -> IO CInt
+
+-- | Detach a thread.
+detach :: ThreadId -> IO ()
+detach tid = throwIfNonZero_ $ pthread_detach tid
+
+foreign import capi unsafe "pthread.h" pthread_self :: IO ThreadId
+
+-- | Obtain ID of the calling thread.
+myThreadId :: IO ThreadId
+myThreadId = pthread_self
+
+data DetachState = Detached | Joinable
+  deriving (Eq, Show)
+
+instance Enum DetachState where
+  toEnum #{const PTHREAD_CREATE_DETACHED} = Detached
+  toEnum #{const PTHREAD_CREATE_JOINABLE} = Joinable
+  toEnum _ = error "Invalid detach state attribute value"
+
+  fromEnum Detached = #{const PTHREAD_CREATE_DETACHED}
+  fromEnum Joinable = #{const PTHREAD_CREATE_JOINABLE}
+
+data InheritSched = InheritSched | ExplicitSched
+  deriving (Eq, Show)
+
+instance Enum InheritSched where
+  toEnum #{const PTHREAD_INHERIT_SCHED} = InheritSched
+  toEnum #{const PTHREAD_EXPLICIT_SCHED} = ExplicitSched
+  toEnum _ = error "Invalid inherit-scheduler attribute value"
+
+  fromEnum InheritSched = #{const PTHREAD_INHERIT_SCHED}
+  fromEnum ExplicitSched = #{const PTHREAD_EXPLICIT_SCHED}
+
+data SchedParam = SchedParam
+  { schedPriority :: Int32
+  } deriving (Eq, Show)
+
+instance Storable SchedParam where
+  sizeOf _ = #{size struct sched_param}
+  alignment _ = #{alignment struct sched_param}
+  peek ptr =
+    SchedParam <$>
+      (fromIntegral <$> (#{peek struct sched_param, sched_priority} ptr :: IO CInt))
+  poke ptr SchedParam{..} =
+    #{poke struct sched_param, sched_priority} ptr (fromIntegral schedPriority :: CInt)
+
+data SchedPolicy = SchedFIFO | SchedRR | SchedOther
+  deriving (Eq, Show)
+
+instance Enum SchedPolicy where
+  toEnum #{const SCHED_FIFO} = SchedFIFO
+  toEnum #{const SCHED_RR} = SchedRR
+  toEnum #{const SCHED_OTHER} = SchedOther
+  toEnum _ = error "Invalid scheduling policy attribute value"
+
+  fromEnum SchedFIFO = #{const SCHED_FIFO}
+  fromEnum SchedRR = #{const SCHED_RR}
+  fromEnum SchedOther = #{const SCHED_OTHER}
+
+data Scope = ScopeSystem | ScopeProcess
+  deriving (Eq, Show)
+
+instance Enum Scope where
+  toEnum #{const PTHREAD_SCOPE_SYSTEM} = ScopeSystem
+  toEnum #{const PTHREAD_SCOPE_PROCESS} = ScopeProcess
+  toEnum _ = error "Invalid scope attribute value"
+
+  fromEnum ScopeSystem = #{const PTHREAD_SCOPE_SYSTEM}
+  fromEnum ScopeProcess = #{const PTHREAD_SCOPE_PROCESS}
+
+data Attributes = Attributes
+  { detachState :: DetachState
+  , guardSize :: CSize
+  , inheritSched :: InheritSched
+  , schedParam :: SchedParam
+  , schedPolicy :: SchedPolicy
+  , scope :: Scope
+  , stack :: Ptr ()
+  , stackSize :: CSize
+  }
+
+foreign import capi unsafe "pthread.h" pthread_attr_getdetachstate
+  :: Ptr Attributes -> Ptr CInt -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_getguardsize
+  :: Ptr Attributes -> Ptr CSize -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_getinheritsched
+  :: Ptr Attributes -> Ptr CInt -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_getschedparam
+  :: Ptr Attributes -> Ptr SchedParam -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_getschedpolicy
+  :: Ptr Attributes -> Ptr CInt -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_getscope
+  :: Ptr Attributes -> Ptr CInt -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_getstack
+  :: Ptr Attributes -> Ptr (Ptr ()) -> Ptr CSize -> IO CInt
+
+foreign import capi unsafe "pthread.h" pthread_attr_setdetachstate
+  :: Ptr Attributes -> CInt -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_setguardsize
+  :: Ptr Attributes -> CSize -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_setinheritsched
+  :: Ptr Attributes -> CInt -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_setschedparam
+  :: Ptr Attributes -> Ptr SchedParam -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_setschedpolicy
+  :: Ptr Attributes -> CInt -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_setscope
+  :: Ptr Attributes -> CInt -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_setstack
+  :: Ptr Attributes -> Ptr () -> CSize -> IO CInt
+
+instance Storable Attributes where
+  sizeOf _ = #{size pthread_attr_t}
+  alignment _ = #{alignment pthread_attr_t}
+
+  peek attr = do
+      detachState <- enum <$> alloca (\x -> pthread_attr_getdetachstate attr x >> peek x)
+      guardSize <- alloca (\x -> pthread_attr_getguardsize attr x >> peek x)
+      inheritSched <- enum <$> alloca (\x -> pthread_attr_getinheritsched attr x >> peek x)
+      schedParam <- alloca (\x -> pthread_attr_getschedparam attr x >> peek x)
+      schedPolicy <- enum <$> alloca (\x -> pthread_attr_getschedpolicy attr x >> peek x)
+      scope <- enum <$> alloca (\x -> pthread_attr_getscope attr x >> peek x)
+      (stack, stackSize) <-
+        alloca $ \x -> alloca $ \y -> do
+          _ <- pthread_attr_getstack attr x y
+          (,) <$> peek x <*> peek y
+      return Attributes{..}
+    where
+      enum :: Enum a => CInt -> a
+      enum = toEnum . fromIntegral
+
+  poke attr Attributes{..} = do
+      throwIfNonZero_ $ pthread_attr_setdetachstate attr (enum detachState)
+      throwIfNonZero_ $ pthread_attr_setguardsize attr guardSize
+      throwIfNonZero_ $ pthread_attr_setinheritsched attr (enum inheritSched)
+      throwIfNonZero_ $ alloca $ \sp -> do
+        poke sp schedParam
+        pthread_attr_setschedparam attr sp
+      throwIfNonZero_ $ pthread_attr_setschedpolicy attr (enum schedPolicy)
+      throwIfNonZero_ $ pthread_attr_setscope attr (enum scope)
+      throwIfNonZero_ $ pthread_attr_setstack attr stack stackSize
+    where
+      enum :: Enum a => a -> CInt
+      enum = fromIntegral . fromEnum
 
 -- | Opaque objects used to locate thread-specific data.
 newtype Key = Key #{type pthread_key_t}
