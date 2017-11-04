@@ -18,6 +18,7 @@ module System.Posix.Thread
   ) where
 
 import Control.Concurrent (isCurrentThreadBound, rtsSupportsBoundThreads)
+import Control.Exception (Exception, throwIO)
 import Control.Monad ((>=>), unless, when)
 import Foreign.C.Types
 import Foreign.C.Error (Errno(..), errnoToIOError)
@@ -79,12 +80,18 @@ getSpecific k = do
     checkBoundness
     pthread_getspecific k
 
+data ThreadNotBound = ThreadNotBound
+
+instance Exception ThreadNotBound
+
+instance Show ThreadNotBound where
+  show _ = "Calling thread is not bound"
+
 -- | Yields an error if the calling thread is not bound.
 checkBoundness :: IO ()
 checkBoundness = when rtsSupportsBoundThreads $ do
     bound <- isCurrentThreadBound
-    unless bound $
-      fail "pthread: checkBoundness: Calling thread is not bound"
+    unless bound $ throwIO ThreadNotBound
 
 -- | Yields an error if the passed integer is not zero.
 throwIfNonZero_ :: HasCallStack => IO CInt -> IO ()
