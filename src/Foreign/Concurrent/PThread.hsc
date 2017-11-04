@@ -9,6 +9,7 @@ module Foreign.Concurrent.PThread
   ( -- * thread local storage
     Key
   , keyCreate
+  , keyCreate_
   , keyDelete
   , setSpecific
   , getSpecific
@@ -39,6 +40,10 @@ foreign import capi unsafe "pthread.h"
 keyCreate :: FunPtr (Ptr a -> IO ()) -> IO Key
 keyCreate destructor = alloca $ \keyPtr ->
     pthread_key_create keyPtr destructor >>= checkReturnCode >> peek keyPtr
+
+-- | Like 'keyCreate', but with no finalizer.
+keyCreate_ :: IO Key
+keyCreate_ = keyCreate nullFunPtr
 
 foreign import capi unsafe "pthread.h"
    pthread_key_delete :: Key -> IO CInt
