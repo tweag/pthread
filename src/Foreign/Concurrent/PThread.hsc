@@ -10,9 +10,9 @@
 module Foreign.Concurrent.PThread
   ( -- * thread local storage
     Key
-  , keyCreate
-  , keyCreate_
-  , keyDelete
+  , createKey
+  , createKey_
+  , deleteKey
   , setSpecific
   , getSpecific
   ) where
@@ -41,29 +41,29 @@ foreign import capi unsafe "pthread.h"
    pthread_key_create :: Ptr Key -> FunPtr (Ptr a -> IO ()) -> IO CInt
 
 -- | Thread-specific data key creation.
-keyCreate
+createKey
   :: FunPtr (Ptr a -> IO ()) -- ^ Finalizer
   -> IO Key
-keyCreate destructor = alloca $ \keyPtr -> do
+createKey destructor = alloca $ \keyPtr -> do
     throwIfNonZero_ $ pthread_key_create keyPtr destructor
     peek keyPtr
 
--- | Like 'keyCreate', but with no finalizer.
-keyCreate_ :: IO Key
-keyCreate_ = keyCreate nullFunPtr
+-- | Like 'createKey', but with no finalizer.
+createKey_ :: IO Key
+createKey_ = createKey nullFunPtr
 
 foreign import capi unsafe "pthread.h"
    pthread_key_delete :: Key -> IO CInt
 
 -- | Thread-specific data key deletion.
-keyDelete :: Key -> IO ()
-keyDelete k = throwIfNonZero_ $ pthread_key_delete k
+deleteKey :: Key -> IO ()
+deleteKey k = throwIfNonZero_ $ pthread_key_delete k
 
 foreign import capi unsafe "pthread.h"
    pthread_setspecific :: Key -> Ptr a -> IO CInt
 
 -- | Associate a thread-specific /value/ with a /key/ obtained via a previous
--- call to 'keyCreate'.
+-- call to 'createKey'.
 setSpecific :: Key -> Ptr a -> IO ()
 setSpecific k v = do
     checkBoundness
