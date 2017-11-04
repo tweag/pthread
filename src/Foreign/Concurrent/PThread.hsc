@@ -1,10 +1,12 @@
--- | PThread bindings
+-- | Bindings to the POSIX threads library.
 
 {-# LANGUAGE CApiFFI #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 -- see comment on the imports of Data.Int and Data.Word
 {-# OPTIONS_GHC -Wno-unused-imports #-}
+
 module Foreign.Concurrent.PThread
   ( -- * thread local storage
     Key
@@ -28,7 +30,7 @@ import Data.Word
 
 #include <pthread.h>
 
--- | Stands for @pthread_key_t@.
+-- | Opaque objects used to locate thread-specific data.
 newtype Key = Key #{type pthread_key_t}
   deriving (Eq, Ord, Show, Storable)
 -- We check in cbits/checks.c that the size of pthread_key_t fits unsigned int.
@@ -36,8 +38,10 @@ newtype Key = Key #{type pthread_key_t}
 foreign import capi unsafe "pthread.h"
    pthread_key_create :: Ptr Key -> FunPtr (Ptr a -> IO ()) -> IO CInt
 
--- | Stands for @pthread_key_create@.
-keyCreate :: FunPtr (Ptr a -> IO ()) -> IO Key
+-- | Thread-specific data key creation.
+keyCreate
+  :: FunPtr (Ptr a -> IO ()) -- ^ Finalizer
+  -> IO Key
 keyCreate destructor = alloca $ \keyPtr ->
     pthread_key_create keyPtr destructor >>= checkReturnCode >> peek keyPtr
 
@@ -48,21 +52,23 @@ keyCreate_ = keyCreate nullFunPtr
 foreign import capi unsafe "pthread.h"
    pthread_key_delete :: Key -> IO CInt
 
--- | Stands for @pthread_key_delete@.
+-- | Thread-specific data key deletion.
 keyDelete :: Key -> IO ()
 keyDelete = pthread_key_delete >=> checkReturnCode
 
 foreign import capi unsafe "pthread.h"
    pthread_setspecific :: Key -> Ptr a -> IO CInt
 
--- | Stands for @pthread_setspecific@.
+-- | Associate a thread-specific /value/ with a /key/ obtained via a previous
+-- call to 'keyCreate'.
 setSpecific :: Key -> Ptr a -> IO ()
 setSpecific k v = checkBoundness >> pthread_setspecific k v >>= checkReturnCode
 
 foreign import capi unsafe "pthread.h"
    pthread_getspecific :: Key -> IO (Ptr a)
 
--- | Stands for @pthread_getspecific@.
+-- | Return the value currently bound to the specified key on behalf of the
+-- calling thread.
 getSpecific :: Key -> IO (Ptr a)
 getSpecific k = do
     checkBoundness
