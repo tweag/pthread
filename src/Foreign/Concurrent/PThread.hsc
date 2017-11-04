@@ -20,9 +20,11 @@ module Foreign.Concurrent.PThread
 import Control.Concurrent (isCurrentThreadBound, rtsSupportsBoundThreads)
 import Control.Monad ((>=>), unless, when)
 import Foreign.C.Types
+import Foreign.C.Error (Errno(..), errnoToIOError)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr
 import Foreign.Storable
+import GHC.Stack (HasCallStack, callStack, getCallStack)
 
 -- These two might be used depending on what the Key representation expands to.
 import Data.Int
@@ -42,8 +44,9 @@ foreign import capi unsafe "pthread.h"
 keyCreate
   :: FunPtr (Ptr a -> IO ()) -- ^ Finalizer
   -> IO Key
-keyCreate destructor = alloca $ \keyPtr ->
-    pthread_key_create keyPtr destructor >>= checkReturnCode >> peek keyPtr
+keyCreate destructor = alloca $ \keyPtr -> do
+    throwIfNonZero_ $ pthread_key_create keyPtr destructor
+    peek keyPtr
 
 -- | Like 'keyCreate', but with no finalizer.
 keyCreate_ :: IO Key
@@ -54,7 +57,7 @@ foreign import capi unsafe "pthread.h"
 
 -- | Thread-specific data key deletion.
 keyDelete :: Key -> IO ()
-keyDelete = pthread_key_delete >=> checkReturnCode
+keyDelete k = throwIfNonZero_ $ pthread_key_delete k
 
 foreign import capi unsafe "pthread.h"
    pthread_setspecific :: Key -> Ptr a -> IO CInt
@@ -62,7 +65,9 @@ foreign import capi unsafe "pthread.h"
 -- | Associate a thread-specific /value/ with a /key/ obtained via a previous
 -- call to 'keyCreate'.
 setSpecific :: Key -> Ptr a -> IO ()
-setSpecific k v = checkBoundness >> pthread_setspecific k v >>= checkReturnCode
+setSpecific k v = do
+    checkBoundness
+    throwIfNonZero_ $ pthread_setspecific k v
 
 foreign import capi unsafe "pthread.h"
    pthread_getspecific :: Key -> IO (Ptr a)
@@ -82,6 +87,8 @@ checkBoundness = when rtsSupportsBoundThreads $ do
       fail "pthread: checkBoundness: Calling thread is not bound"
 
 -- | Yields an error if the passed integer is not zero.
-checkReturnCode :: CInt -> IO ()
-checkReturnCode rc = when (rc /= 0) $
-    fail $ "pthread: checkReturnCode: non-zero return code: " ++ show rc
+throwIfNonZero_ :: HasCallStack => IO CInt -> IO ()
+throwIfNonZero_ m = m >>= \rc -> when (rc /= 0) $
+    ioError (errnoToIOError name (Errno rc) Nothing Nothing)
+  where
+    (name, _):_ = getCallStack callStack
