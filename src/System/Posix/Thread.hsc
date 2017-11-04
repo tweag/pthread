@@ -7,7 +7,7 @@
 -- see comment on the imports of Data.Int and Data.Word
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 
-module Foreign.Concurrent.PThread
+module System.Posix.Thread
   ( -- * thread local storage
     Key
   , createKey
