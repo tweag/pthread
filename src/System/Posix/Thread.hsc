@@ -70,6 +70,11 @@ create action =
 create_ :: IO () -> IO ThreadId
 create_ action = create (action >> return nullPtr)
 
+foreign import capi unsafe "pthread.h" pthread_attr_init
+  :: Ptr AttributesMonoid -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_destroy
+  :: Ptr AttributesMonoid -> IO CInt
+
 -- | Create a new thread.
 createWithAttributes
   :: AttributesMonoid
@@ -78,9 +83,11 @@ createWithAttributes
 createWithAttributes attrs action =
     alloca $ \tidPtr ->
     alloca $ \attrsPtr -> do
+      throwIfNonZero_ $ pthread_attr_init attrsPtr
       poke attrsPtr attrs
       fptr <- wrap $ \_ -> action
       throwIfNonZero_ $ pthread_create tidPtr attrsPtr fptr nullPtr
+      throwIfNonZero_ $ pthread_attr_destroy attrsPtr
       peek tidPtr
 
 -- | Like 'createWithAttributes', but with an 'IO' computation that returns
