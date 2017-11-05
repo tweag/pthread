@@ -1,4 +1,6 @@
 -- | Bindings to the POSIX threads library.
+--
+-- Requires linking with the @-threaded@ RTS.
 
 {-# LANGUAGE CApiFFI #-}
 {-# LANGUAGE DeriveGeneric #-}
