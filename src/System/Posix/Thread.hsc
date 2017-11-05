@@ -35,7 +35,7 @@ module System.Posix.Thread
   ) where
 
 import Control.Concurrent (isCurrentThreadBound, rtsSupportsBoundThreads)
-import Control.Exception (Exception, throwIO)
+import Control.Exception (Exception, bracket_, throwIO)
 import Control.Monad (forM_, unless, when)
 import Data.Monoid (First(..))
 import Foreign.C.Types
@@ -64,7 +64,10 @@ foreign import ccall "wrapper" wrap :: (Ptr a -> IO (Ptr b)) -> IO (FunPtr (Ptr 
 -- | Create a new thread.
 create :: IO (Ptr a) -> IO ThreadId
 create action =
-    createWithAttributes mempty action
+    alloca $ \tidPtr -> do
+      fptr <- wrap $ \_ -> action
+      throwIfNonZero_ $ pthread_create tidPtr nullPtr fptr nullPtr
+      peek tidPtr
 
 -- | Like 'create', but with an 'IO' computation that returns nothing.
 create_ :: IO () -> IO ThreadId
@@ -83,12 +86,13 @@ createWithAttributes
 createWithAttributes attrs action =
     alloca $ \tidPtr ->
     alloca $ \attrsPtr -> do
-      throwIfNonZero_ $ pthread_attr_init attrsPtr
-      poke attrsPtr attrs
-      fptr <- wrap $ \_ -> action
-      throwIfNonZero_ $ pthread_create tidPtr attrsPtr fptr nullPtr
-      throwIfNonZero_ $ pthread_attr_destroy attrsPtr
-      peek tidPtr
+      bracket_
+        (throwIfNonZero_ $ pthread_attr_init attrsPtr)
+        (throwIfNonZero_ $ pthread_attr_destroy attrsPtr) $ do
+          poke attrsPtr attrs
+          fptr <- wrap $ \_ -> action
+          throwIfNonZero_ $ pthread_create tidPtr attrsPtr fptr nullPtr
+          peek tidPtr
 
 -- | Like 'createWithAttributes', but with an 'IO' computation that returns
 -- nothing.
