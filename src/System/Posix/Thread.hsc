@@ -1,6 +1,8 @@
 -- | Bindings to the POSIX threads library.
 
 {-# LANGUAGE CApiFFI #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -12,6 +14,8 @@ module System.Posix.Thread
   ( -- * Threads
     create
   , create_
+  , createWithAttributes
+  , createWithAttributes_
   , exit
   , exit_
   , cancel
@@ -20,6 +24,7 @@ module System.Posix.Thread
   , myThreadId
     -- * Attributes
   , Attributes(..)
+  , AttributesMonoid(..)
     -- * Thread local storage
   , Key
   , createKey
@@ -31,12 +36,15 @@ module System.Posix.Thread
 
 import Control.Concurrent (isCurrentThreadBound, rtsSupportsBoundThreads)
 import Control.Exception (Exception, throwIO)
-import Control.Monad ((>=>), unless, when)
+import Control.Monad (forM_, unless, when)
+import Data.Monoid (First(..))
 import Foreign.C.Types
 import Foreign.C.Error (Errno(..), errnoToIOError)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Ptr (FunPtr, Ptr, nullFunPtr, nullPtr)
+import Foreign.Ptr (FunPtr, Ptr, castPtr, nullFunPtr, nullPtr)
 import Foreign.Storable
+import Generics.Deriving.Monoid (memptydefault, mappenddefault)
+import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack, callStack, getCallStack, prettySrcLoc)
 
 -- These two might be used depending on what the Key representation expands to.
@@ -49,16 +57,25 @@ newtype ThreadId = ThreadId #{type pthread_t}
   deriving (Eq, Ord, Show, Storable)
 
 foreign import capi unsafe "pthread.h" pthread_create
-  :: Ptr ThreadId -> Ptr Attributes -> FunPtr (Ptr a -> IO b) -> Ptr a -> IO CInt
+  :: Ptr ThreadId -> Ptr AttributesMonoid -> FunPtr (Ptr a -> IO b) -> Ptr a -> IO CInt
 
 foreign import ccall "wrapper" wrap :: (Ptr a -> IO (Ptr b)) -> IO (FunPtr (Ptr a -> IO (Ptr b)))
 
 -- | Create a new thread.
-create
-  :: Attributes
+create :: IO (Ptr a) -> IO ThreadId
+create action =
+    createWithAttributes mempty action
+
+-- | Like 'create', but with an 'IO' computation that returns nothing.
+create_ :: IO () -> IO ThreadId
+create_ action = create (action >> return nullPtr)
+
+-- | Create a new thread.
+createWithAttributes
+  :: AttributesMonoid
   -> IO (Ptr a) -- ^ Created thread runs this IO computation.
   -> IO ThreadId
-create attrs action =
+createWithAttributes attrs action =
     alloca $ \tidPtr ->
     alloca $ \attrsPtr -> do
       poke attrsPtr attrs
@@ -66,9 +83,11 @@ create attrs action =
       throwIfNonZero_ $ pthread_create tidPtr attrsPtr fptr nullPtr
       peek tidPtr
 
--- | Like 'create', but with an 'IO' computation that returns nothing.
-create_ :: Attributes -> IO () -> IO ThreadId
-create_ attrs action = create attrs (action >> return nullPtr)
+-- | Like 'createWithAttributes', but with an 'IO' computation that returns
+-- nothing.
+createWithAttributes_ :: AttributesMonoid -> IO () -> IO ThreadId
+createWithAttributes_ attrs action =
+    createWithAttributes attrs (action >> return nullPtr)
 
 foreign import capi safe "pthread.h" pthread_exit :: Ptr a -> IO ()
 
@@ -166,6 +185,7 @@ instance Enum Scope where
   fromEnum ScopeSystem = #{const PTHREAD_SCOPE_SYSTEM}
   fromEnum ScopeProcess = #{const PTHREAD_SCOPE_PROCESS}
 
+-- | Thread attributes.
 data Attributes = Attributes
   { detachState :: DetachState
   , guardSize :: CSize
@@ -175,7 +195,37 @@ data Attributes = Attributes
   , scope :: Scope
   , stack :: Ptr ()
   , stackSize :: CSize
-  }
+  } deriving (Generic, Show)
+
+-- | Partial set of thread attributes. Think of it as a diff to apply to the
+-- default attributes object.
+data AttributesMonoid = AttributesMonoid
+  { detachState :: First DetachState
+  , guardSize :: First CSize
+  , inheritSched :: First InheritSched
+  , schedParam :: First SchedParam
+  , schedPolicy :: First SchedPolicy
+  , scope :: First Scope
+  , stack :: First (Ptr ())
+  , stackSize :: First CSize
+  } deriving (Generic, Show)
+
+instance Monoid AttributesMonoid where
+  mempty = memptydefault
+  mappend = mappenddefault
+
+monoidFromAttributes :: Attributes -> AttributesMonoid
+monoidFromAttributes Attributes{..} =
+    AttributesMonoid
+      { detachState = return detachState
+      , guardSize = return guardSize
+      , inheritSched = return inheritSched
+      , schedParam = return schedParam
+      , schedPolicy = return schedPolicy
+      , scope = return scope
+      , stack = return stack
+      , stackSize = return stackSize
+      }
 
 foreign import capi unsafe "pthread.h" pthread_attr_getdetachstate
   :: Ptr Attributes -> Ptr CInt -> IO CInt
@@ -193,19 +243,52 @@ foreign import capi unsafe "pthread.h" pthread_attr_getstack
   :: Ptr Attributes -> Ptr (Ptr ()) -> Ptr CSize -> IO CInt
 
 foreign import capi unsafe "pthread.h" pthread_attr_setdetachstate
-  :: Ptr Attributes -> CInt -> IO CInt
+  :: Ptr AttributesMonoid -> CInt -> IO CInt
 foreign import capi unsafe "pthread.h" pthread_attr_setguardsize
-  :: Ptr Attributes -> CSize -> IO CInt
+  :: Ptr AttributesMonoid -> CSize -> IO CInt
 foreign import capi unsafe "pthread.h" pthread_attr_setinheritsched
-  :: Ptr Attributes -> CInt -> IO CInt
+  :: Ptr AttributesMonoid -> CInt -> IO CInt
 foreign import capi unsafe "pthread.h" pthread_attr_setschedparam
-  :: Ptr Attributes -> Ptr SchedParam -> IO CInt
+  :: Ptr AttributesMonoid -> Ptr SchedParam -> IO CInt
 foreign import capi unsafe "pthread.h" pthread_attr_setschedpolicy
-  :: Ptr Attributes -> CInt -> IO CInt
+  :: Ptr AttributesMonoid -> CInt -> IO CInt
 foreign import capi unsafe "pthread.h" pthread_attr_setscope
-  :: Ptr Attributes -> CInt -> IO CInt
+  :: Ptr AttributesMonoid -> CInt -> IO CInt
 foreign import capi unsafe "pthread.h" pthread_attr_setstack
-  :: Ptr Attributes -> Ptr () -> CSize -> IO CInt
+  :: Ptr AttributesMonoid -> Ptr () -> CSize -> IO CInt
+foreign import capi unsafe "pthread.h" pthread_attr_setstacksize
+  :: Ptr AttributesMonoid -> CSize -> IO CInt
+
+instance Storable AttributesMonoid where
+  sizeOf _ = #{size pthread_attr_t}
+  alignment _ = #{alignment pthread_attr_t}
+
+  peek attr = monoidFromAttributes <$> peek (castPtr attr)
+
+  poke attr AttributesMonoid{..} = do
+      forM_ detachState $ \x ->
+        throwIfNonZero_ $ pthread_attr_setdetachstate attr (enum x)
+      forM_ guardSize $ \x ->
+        throwIfNonZero_ $ pthread_attr_setguardsize attr x
+      forM_ inheritSched $ \x ->
+        throwIfNonZero_ $ pthread_attr_setinheritsched attr (enum x)
+      forM_ schedParam $ \x ->
+        throwIfNonZero_ $ alloca $ \sp -> do
+          poke sp x
+          pthread_attr_setschedparam attr sp
+      forM_ schedPolicy $ \x ->
+        throwIfNonZero_ $ pthread_attr_setschedpolicy attr (enum x)
+      forM_ scope $ \x ->
+        throwIfNonZero_ $ pthread_attr_setscope attr (enum x)
+      case (stack, stackSize) of
+        (First (Just x), First (Just y)) ->
+          throwIfNonZero_ $ pthread_attr_setstack attr x y
+        (First Nothing, First (Just y)) ->
+          throwIfNonZero_ $ pthread_attr_setstacksize attr y
+        _ -> return ()
+    where
+      enum :: Enum a => a -> CInt
+      enum = fromIntegral . fromEnum
 
 instance Storable Attributes where
   sizeOf _ = #{size pthread_attr_t}
@@ -227,19 +310,7 @@ instance Storable Attributes where
       enum :: Enum a => CInt -> a
       enum = toEnum . fromIntegral
 
-  poke attr Attributes{..} = do
-      throwIfNonZero_ $ pthread_attr_setdetachstate attr (enum detachState)
-      throwIfNonZero_ $ pthread_attr_setguardsize attr guardSize
-      throwIfNonZero_ $ pthread_attr_setinheritsched attr (enum inheritSched)
-      throwIfNonZero_ $ alloca $ \sp -> do
-        poke sp schedParam
-        pthread_attr_setschedparam attr sp
-      throwIfNonZero_ $ pthread_attr_setschedpolicy attr (enum schedPolicy)
-      throwIfNonZero_ $ pthread_attr_setscope attr (enum scope)
-      throwIfNonZero_ $ pthread_attr_setstack attr stack stackSize
-    where
-      enum :: Enum a => a -> CInt
-      enum = fromIntegral . fromEnum
+  poke attr Attributes{..} = poke (castPtr attr) (monoidFromAttributes Attributes{..})
 
 -- | Opaque objects used to locate thread-specific data.
 newtype Key = Key #{type pthread_key_t}
