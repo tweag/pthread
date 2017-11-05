@@ -28,3 +28,18 @@ library
     base > 4.9.0.0 && < 5,
     generic-deriving >= 1.11
   default-language: Haskell2010
+
+test-suite spec
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tests
+  main-is: Main.hs
+  other-modules:
+    System.Posix.ThreadSpec
+    Spec
+  build-depends:
+    base,
+    hspec >= 2.2,
+    hspec-discover >= 2.2,
+    pthread
+  default-language: Haskell2010
+  ghc-options: -threaded -rtsopts
