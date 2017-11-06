@@ -67,6 +67,7 @@ foreign import ccall "wrapper" wrap :: (Ptr a -> IO (Ptr b)) -> IO (FunPtr (Ptr 
 create :: IO (Ptr a) -> IO ThreadId
 create action =
     alloca $ \tidPtr -> do
+      unless rtsSupportsBoundThreads (error "Use -threaded RTS.")
       fptr <- wrap $ \_ -> action
       throwIfNonZero_ $ pthread_create tidPtr nullPtr fptr nullPtr
       peek tidPtr
@@ -88,6 +89,7 @@ createWithAttributes
 createWithAttributes attrs action =
     alloca $ \tidPtr ->
     alloca $ \attrsPtr -> do
+      unless rtsSupportsBoundThreads (error "Use -threaded RTS.")
       bracket_
         (throwIfNonZero_ $ pthread_attr_init attrsPtr)
         (throwIfNonZero_ $ pthread_attr_destroy attrsPtr) $ do
