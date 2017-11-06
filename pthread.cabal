@@ -1,5 +1,5 @@
 name:                pthread
-version:             0.1.1
+version:             0.2.0
 synopsis:            Bindings for the pthread library.
 homepage:            http://github.com/tweag/pthread
 license:             BSD3
