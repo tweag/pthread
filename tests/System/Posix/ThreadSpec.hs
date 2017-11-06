@@ -2,9 +2,8 @@
 
 module System.Posix.ThreadSpec (spec) where
 
-import Control.Concurrent
 import Control.Monad (forM_, replicateM, replicateM_)
-import Foreign.Ptr (Ptr, nullPtr)
+import Foreign.Ptr (Ptr)
 import Foreign.Marshal.Alloc (alloca)
 import qualified System.Posix.Thread as Posix
 import Test.Hspec
