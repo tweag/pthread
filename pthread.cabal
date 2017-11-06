@@ -23,7 +23,7 @@ library
   hs-source-dirs: src
   extra-libraries: pthread
   exposed-modules:
-    Foreign.Concurrent.PThread
+    System.Posix.Thread
   build-depends:
     base > 4.9.0.0 && < 5
   default-language: Haskell2010

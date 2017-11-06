@@ -9,7 +9,9 @@ jobs:
         key: pthread-stack-dependencies-{{ checksum "stack.yaml" }}
     - run:
         name: install stack
-        command: curl -sSL https://get.haskellstack.org/ | sh
+        command: |
+            sudo apt-get update
+            curl -sSL https://get.haskellstack.org/ | sh
     - run:
         name: build dependencies
         command: |
