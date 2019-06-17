@@ -225,9 +225,11 @@ data AttributesMonoid = AttributesMonoid
   , stackSize :: First CSize
   } deriving (Generic, Show)
 
+instance Semigroup AttributesMonoid where
+  (<>) = mappenddefault
+
 instance Monoid AttributesMonoid where
   mempty = memptydefault
-  mappend = mappenddefault
 
 monoidFromAttributes :: Attributes -> AttributesMonoid
 monoidFromAttributes Attributes{..} =
