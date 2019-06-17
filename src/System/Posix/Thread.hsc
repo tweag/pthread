@@ -40,6 +40,7 @@ import Control.Concurrent (isCurrentThreadBound, rtsSupportsBoundThreads)
 import Control.Exception (Exception, bracket_, throwIO)
 import Control.Monad (forM_, unless, when)
 import Data.Monoid (First(..))
+import Data.Semigroup (Semigroup(..))
 import Foreign.C.Types
 import Foreign.C.Error (Errno(..), errnoToIOError)
 import Foreign.Marshal.Alloc (alloca)
@@ -230,6 +231,7 @@ instance Semigroup AttributesMonoid where
 
 instance Monoid AttributesMonoid where
   mempty = memptydefault
+  mappend = (<>)
 
 monoidFromAttributes :: Attributes -> AttributesMonoid
 monoidFromAttributes Attributes{..} =
